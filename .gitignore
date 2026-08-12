@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- morning call app ---
+*.db
+*.sqlite3
+.env.local

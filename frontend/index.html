@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI モーニングコール</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>☎️ AI モーニングコール</h1>
+      <p class="sub">チャットで「明日の7時に起こして」と書くだけで予約できます。</p>
+    </header>
+
+    <main>
+      <section class="panel" id="settings-panel">
+        <h2>設定</h2>
+        <div class="field">
+          <label for="api-key">API キー</label>
+          <input id="api-key" type="password" placeholder=".env の API_KEY" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="phone-number">電話番号（E.164）</label>
+          <input id="phone-number" type="tel" placeholder="+819012345678" autocomplete="off" />
+        </div>
+        <div class="actions">
+          <button id="save-settings" type="button">保存</button>
+          <span id="settings-status" class="status"></span>
+        </div>
+      </section>
+
+      <section class="panel" id="chat-panel">
+        <h2>チャットで予約</h2>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form">
+          <input
+            id="chat-input"
+            type="text"
+            placeholder="例）明日の朝7時に優しく起こして"
+            autocomplete="off"
+          />
+          <button type="submit">送信</button>
+        </form>
+      </section>
+
+      <section class="panel" id="calls-panel">
+        <div class="panel-head">
+          <h2>予約一覧</h2>
+          <button id="refresh-calls" type="button" class="ghost">再読み込み</button>
+        </div>
+        <div id="calls-list" class="calls-list"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
