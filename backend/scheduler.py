@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
-from . import config, twilio_client
+from . import config, telnyx_client
 from .db import session_scope
 from .models import Call, CallStatus, ConversationLog, utcnow
 
@@ -102,8 +102,8 @@ def _fire(call_id: int) -> None:
         call.status = CallStatus.DIALING.value
 
     try:
-        sid = twilio_client.place_call(to=to, call_id=call_id, token=token)
-    except twilio_client.CallPlacementError as exc:
+        sid = telnyx_client.place_call(to=to, call_id=call_id, token=token)
+    except telnyx_client.CallPlacementError as exc:
         # 要件どおり自動リトライはしない。ログと DB に残して終わる。
         with session_scope() as session:
             failed = session.get(Call, call_id)
@@ -113,10 +113,13 @@ def _fire(call_id: int) -> None:
         logger.error("発信に失敗しました call_id=%s: %s", call_id, exc)
         return
 
+    if sid is None:
+        return
+
     with session_scope() as session:
         dialed = session.get(Call, call_id)
         if dialed is not None:
-            dialed.twilio_call_sid = sid
+            dialed.provider_call_sid = sid
 
 
 def create_followup_call(parent_call_id: int, *, minutes: int | None = None) -> int | None:

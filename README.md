@@ -4,11 +4,16 @@
 電話に出て「起きた？」に答えると、AI が返答を聞き取って**本当に起きたか判定**し、
 まだ眠そうなら 5 分後に自動で再架電します。
 
-- 電話基盤: Twilio Programmable Voice / ConversationRelay
+- 電話基盤: Telnyx Programmable Voice (TeXML) / Conversation Relay
 - AI: Anthropic Claude API（既定 `claude-haiku-4-5`）
 - バックエンド: Python 3.11+ / FastAPI
-- DB: SQLite / スケジューラ: APScheduler（Firebase 不要・クレカ登録不要）
+- DB: SQLite / スケジューラ: APScheduler（Firebase 不要）
 - macOS / Xcode 不要。Windows だけで開発・運用できます。
+
+> **なぜ Telnyx なのか**
+> 当初は Twilio で実装していましたが、本人確認（Compliance Profile）が通らず電話番号を
+> 購入できなかったため Telnyx へ移行しました。Telnyx の Conversation Relay は Twilio の
+> ConversationRelay とほぼ同一仕様なので、会話処理のコードはそのまま流用できています。
 
 ---
 
@@ -31,7 +36,7 @@
 
 | バージョン | 内容 | 状態 |
 |---|---|---|
-| v0 | Twilio から自分の携帯に発信できることの確認 | 手順のみ（コード不要） |
+| v0 | Telnyx から自分の携帯に発信できることの確認 | 手順のみ（コード不要） |
 | v1 | 指定日時に自動でモーニングコール（固定メッセージ読み上げ） | ✅ 実装済み |
 | v2 | AI が返答を聞き取って起床判定 → 二度寝なら再架電 | ✅ 実装済み |
 | v3 | チャット欄に「明日7時に起こして」と書くだけで予約 | ✅ 実装済み |
@@ -42,17 +47,17 @@
 予定時刻 ──> APScheduler が発火
               │
               ▼
-         Twilio Voice API で発信
+      Telnyx TeXML Calls API で発信
               │
               ▼
-   Twilio が /twilio/voice/{id} を叩く ──> ConversationRelay の TwiML を返す
+   Telnyx が /telnyx/voice/{id} を叩く ──> Conversation Relay の TeXML を返す
               │
               ▼
-   Twilio が WebSocket /conversation-relay に接続
+   Telnyx が WebSocket /conversation-relay に接続
               │
    AI「おはようございます。起きていますか？」
               │
-        あなたの返答（Twilio が文字起こし）
+        あなたの返答（Telnyx が文字起こし）
               │
               ▼
         Claude が判定
@@ -73,10 +78,10 @@ AI-morning-call/
 │   ├── db.py              # SQLite 接続
 │   ├── models.py          # DB モデル（Call / ConversationLog / Setting）
 │   ├── schemas.py         # リクエスト検証
-│   ├── auth.py            # APIキー認証・Twilio 署名検証
+│   ├── auth.py            # APIキー認証・Telnyx 署名検証
 │   ├── scheduler.py       # APScheduler・発信ジョブ・再架電
-│   ├── twilio_client.py   # 発信と TwiML 生成
-│   ├── conversation.py    # ConversationRelay の WebSocket ハンドラ
+│   ├── telnyx_client.py   # 発信と TeXML 生成
+│   ├── conversation.py    # Conversation Relay の WebSocket ハンドラ
 │   ├── llm_client.py      # Claude API 呼び出し
 │   └── requirements.txt
 ├── frontend/              # v3 のチャット UI（素の HTML/CSS/JS）
@@ -93,44 +98,66 @@ AI-morning-call/
 
 ### あなたにお願いする作業（所要 30 分ほど）
 
-#### ① Twilio アカウントを作る
+#### ① Telnyx アカウントを作る
 
-1. https://www.twilio.com/try-twilio から登録
-2. コンソール右下の **Account SID** と **Auth Token** を控える
+https://telnyx.com から登録します。番号購入前にクレジットカードの登録が必要な場合があります
+（画面上部に `PRETRIAL` と出ているうちは機能制限がかかります）。
 
 #### ② 電話番号を買う
 
-Twilio コンソール → **Phone Numbers → Manage → Buy a number**
+**Numbers → Search & Buy Numbers**
 
-- **Voice** の Capability が付いた番号を選ぶ
-- 日本の番号（+81）は本人確認書類の提出が必要で時間がかかります。
-  **アメリカの番号（+1, 月 $1〜）でも日本の携帯にかけられる**ので、まずはこちらが手軽です。
-- 買った番号を控える（`+1XXXXXXXXXX` の形式）
+- **Country**: United States
+- **Features**: `Voice` にチェック
+- **Number type**: Local
 
-#### ③ 日本への発信を許可する ⚠️ ここでハマりがち
+US の Local 番号は月額無料のものが多く、そこから日本の携帯にも発信できます。
+カート画面の *Connection or Application* / *Messaging Profile* / *Billing Group* は
+空のままで購入して構いません（あとから割り当てます）。
 
-Twilio は既定で国際発信をブロックしています。
+#### ③ API キーを発行する
 
-**Voice → Settings → Geo Permissions** を開き、**Japan** にチェックを入れて保存してください。
-（これを忘れると発信時に `Error 21215` が出ます）
+**Mission Control Portal → API Keys → Create API Key**
 
-#### ④ 自分の携帯番号を認証する（トライアルアカウントの場合）
+発行された `KEY...` を控えます。これが `TELNYX_API_KEY` です。
 
-無料トライアル中は、事前に登録した番号にしか発信できません。
+#### ④ 残高を入れる ⚠️ 忘れがち
 
-**Phone Numbers → Manage → Verified Caller IDs** から自分の携帯番号を追加し、
-届いた認証コードを入力してください。
+**Billing** で入金するかクレジットカードの自動チャージを設定してください。
+残高 $0 のままだと発信が失敗します。テストなら $5〜10 で十分です。
 
-#### ⑤ Anthropic API キーを取得する
+> `TELNYX_ACCOUNT_SID` は**空のままで構いません**。Account ID はポータルに表示されない
+> ことがあるため、未設定なら `account_sid` の要らない発信エンドポイントに自動で切り替わります。
+
+#### ⑤ TeXML Application を作る ⚠️ ここが肝
+
+**Voice → TeXML Applications → Create TeXML Application**
+
+- 名前は何でも構いません（例: `morning-call`）
+- **Voice URL** は空でも動きます。発信のたびにアプリ側から `Url` を渡すためです
+- 作成後に表示される **ID** が `TELNYX_APPLICATION_SID` です
+
+作成したら **② で買った番号にこの Application を割り当ててください**
+（Numbers → My Numbers → 番号を開いて Connection/Application を選択）。
+
+#### ⑥ 日本への発信を許可する ⚠️ ここでハマりがち
+
+**Voice → Outbound Voice Profiles**
+
+プロファイルを作成（または既存のものを開き）、通話先として **Japan** を許可してください。
+Telnyx は既定で国際発信を絞っているため、これを忘れると発信が失敗します。
+作成したプロファイルは TeXML Application に紐づけます。
+
+#### ⑦ Anthropic API キーを取得する
 
 https://console.anthropic.com/settings/keys で発行し、控えてください。
 （`sk-ant-` で始まる文字列。使用量に応じた課金が発生します）
 
-#### ⑥ ngrok を用意する（ローカル開発用）
+#### ⑧ ngrok を用意する（ローカル開発用）
 
-Twilio の Webhook がローカル PC に届くようにするために必要です。
+Telnyx の Webhook がローカル PC に届くようにするために必要です。
 
-1. https://ngrok.com/download からダウンロード、または `winget install ngrok`
+1. `winget install Ngrok.Ngrok`
 2. https://dashboard.ngrok.com/get-started/your-authtoken でトークンを取得
 3. 設定：
 
@@ -143,7 +170,6 @@ ngrok config add-authtoken ここにトークン
 ### プロジェクトのセットアップ
 
 ```bash
-cd C:/Users/kouki/AI-morning-call
 py -m venv .venv
 .venv/Scripts/python.exe -m pip install -r backend/requirements.txt
 ```
@@ -163,12 +189,13 @@ API キー（このアプリを守るためのパスワードのようなもの�
 `.env` を開いて、控えておいた値を埋めてください。
 
 ```ini
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_PHONE_NUMBER=+1XXXXXXXXXX          # ② で買った番号
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxx          # ⑤ のキー
-APP_BASE_URL=                              # 次の手順で ngrok の URL を入れる
-API_KEY=                                   # 上で生成した文字列
+TELNYX_API_KEY=KEYxxxxxxxxxxxxxxxx      # ③
+TELNYX_APPLICATION_SID=xxxxxxxxxxxx     # ⑤
+TELNYX_PHONE_NUMBER=+1XXXXXXXXXX        # ② で買った番号
+TELNYX_ACCOUNT_SID=                     # 空のままでOK
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxx       # ⑦
+APP_BASE_URL=                           # 次の手順で ngrok の URL を入れる
+API_KEY=                                # 上で生成した文字列
 ```
 
 > `.env` は `.gitignore` 済みなので、Git にコミットされません。
@@ -183,15 +210,18 @@ API_KEY=                                   # 上で生成した文字列
 ngrok http 8000
 ```
 
-表示された `https://xxxx-xx-xx.ngrok-free.app` を `.env` の `APP_BASE_URL` に貼ってください（末尾のスラッシュは不要）。
+表示された `https://xxxx-xx-xx.ngrok-free.dev` を `.env` の `APP_BASE_URL` に貼ってください（末尾のスラッシュは不要）。
 
 > ⚠️ 無料版 ngrok は**再起動のたびに URL が変わります**。変わったら `.env` を更新してサーバを再起動してください。
 
 **ターミナル 2 — アプリ**
 
 ```bash
-.venv/Scripts/python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+> PowerShell では相対パスの実行ファイルに `.\` が必要です（`.venv/...` と書くと
+> `CommandNotFoundException` になります）。Git Bash なら `.venv/Scripts/python.exe` でも動きます。
 
 起動できたか確認：
 
@@ -223,22 +253,20 @@ export API_KEY=$(grep '^API_KEY=' .env | cut -d= -f2)
 
 ### v0: まず 1 回、手で電話をかけてみる
 
-コードを書かずに Twilio 側の設定だけ確認します。
+コードを書かずに Telnyx 側の設定だけ確認します。
 
-1. Twilio コンソール → **Voice → TwiML → TwiML Bins** → **Create new TwiML Bin**
-2. 中身にこれを貼って保存：
+Telnyx コンソールの **Voice → TeXML Applications** で作ったアプリの Voice URL に、
+`<Say>` だけを返す静的な TeXML を置いた URL を設定し、
+その番号に自分の携帯からかけて日本語が読み上げられれば OK です。
 
 ```xml
+<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP">おはようございます。テスト通話です。</Say>
 </Response>
 ```
 
-3. **Phone Numbers → Manage → Active numbers** で買った番号を開き、
-   *A call comes in* に作った TwiML Bin を割り当てて保存
-4. その Twilio 番号に自分の携帯からかけて、日本語が読み上げられれば OK
-
-ここまで動けば、Twilio 側の設定（番号・Geo Permissions）は問題ありません。
+ここまで動けば、Telnyx 側の設定（番号・Application・Outbound Voice Profile）は問題ありません。
 
 ### v1: 指定時刻に発信する
 
@@ -248,7 +276,7 @@ export API_KEY=$(grep '^API_KEY=' .env | cut -d= -f2)
 curl -X POST http://localhost:8000/calls/schedule \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"phone_number":"+819012345678","call_at":"2026-08-13T07:00:00+09:00","message":"おはよう、起きる時間だよ","use_conversation":false}'
+  -d '{"phone_number":"+819012345678","call_at":"2026-08-21T07:00:00+09:00","message":"おはよう、起きる時間だよ","use_conversation":false}'
 ```
 
 `use_conversation: false` にすると、AI 会話なしでメッセージを読み上げるだけの v1 動作になります。
@@ -267,13 +295,13 @@ curl -X DELETE -H "X-API-Key: $API_KEY" http://localhost:8000/calls/1
 
 ### v2: AI と会話して起床判定
 
-`use_conversation` を省略（既定 `true`）すれば ConversationRelay が使われます。
+`use_conversation` を省略（既定 `true`）すれば Conversation Relay が使われます。
 
 ```bash
 curl -X POST http://localhost:8000/calls/schedule \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"phone_number":"+819012345678","call_at":"2026-08-13T07:00:00+09:00","message":"おはよう、起きる時間だよ"}'
+  -d '{"phone_number":"+819012345678","call_at":"2026-08-21T07:00:00+09:00","message":"おはよう、起きる時間だよ"}'
 ```
 
 電話に出ると AI が話しかけてきます。
@@ -337,18 +365,19 @@ curl -X POST http://localhost:8000/chat/schedule \
 | `DELETE` | `/calls/{id}` | 予約をキャンセル |
 | `POST` | `/chat/schedule` | 自然文から予約（v3） |
 | `GET` / `PUT` | `/settings/phone` | 電話番号の保存・取得 |
-| `POST` | `/twilio/voice/{id}` | Twilio 用 Webhook（TwiML を返す） |
-| `POST` | `/twilio/status/{id}` | Twilio 用ステータスコールバック |
-| `WS` | `/conversation-relay` | ConversationRelay 接続先 |
+| `POST` | `/telnyx/voice/{id}` | Telnyx 用 Webhook（TeXML を返す） |
+| `POST` | `/telnyx/status/{id}` | Telnyx 用ステータスコールバック |
+| `WS` | `/conversation-relay` | Conversation Relay 接続先 |
 
-Twilio 向けエンドポイントは APIキーではなく、**通話ごとのトークン + Twilio 署名検証**で保護しています。
+Telnyx 向けエンドポイントは APIキーではなく、**通話ごとのトークン**で保護しています
+（任意で Ed25519 署名検証も有効化できます）。
 
 ### `status` の意味
 
 | status | 意味 |
 |---|---|
 | `scheduled` | 予約済み・発信待ち |
-| `dialing` | Twilio に発信を依頼した |
+| `dialing` | Telnyx に発信を依頼した |
 | `in_progress` | 通話中 |
 | `completed` | 正常終了（起床確認 or 再架電予約済み） |
 | `no_answer` | 応答なし・無音 |
@@ -371,8 +400,11 @@ Twilio 向けエンドポイントは APIキーではなく、**通話ごとの�
 | `MAX_SILENCE_STRIKES` | `2` | 無音が何回続いたら諦めるか |
 | `MAX_TURNS` | `8` | 1 通話あたりの最大やり取り回数 |
 | `TIMEZONE` | `Asia/Tokyo` | 日時解釈のタイムゾーン |
-| `TWILIO_TTS_PROVIDER` / `TWILIO_VOICE` | 空 | 音声の指定（空なら Twilio の既定） |
-| `TWILIO_VALIDATE_SIGNATURE` | `true` | Twilio 署名検証。切り分け時のみ `false` に |
+| `TELNYX_LANGUAGE` | `ja-JP` | Conversation Relay の言語 |
+| `TELNYX_TRANSCRIPTION_PROVIDER` | `deepgram` | 文字起こしの提供元 |
+| `TELNYX_SPEECH_MODEL` | `nova-3` | 文字起こしモデル。**`flux` は英語専用なので日本語では使わない** |
+| `TELNYX_TTS_PROVIDER` / `TELNYX_VOICE` | 空 | 読み上げ音声の指定（空なら Telnyx の既定） |
+| `TELNYX_VALIDATE_SIGNATURE` | `false` | Ed25519 署名検証。有効にするなら `TELNYX_PUBLIC_KEY` も設定 |
 
 ### モデルを切り替える
 
@@ -391,19 +423,19 @@ ANTHROPIC_MODEL=claude-sonnet-5
 | 装置 | 内容 |
 |---|---|
 | 再架電の上限 | `MAX_RETRIES`（既定 3 回）を超えたら打ち切り |
-| 発信失敗時の非リトライ | Twilio エラー時はログと DB に記録して終了。次回起動時も再試行しない |
+| 発信失敗時の非リトライ | Telnyx エラー時はログと DB に記録して終了。次回起動時も再試行しない |
 | 起動時の期限切れ処理 | サーバ停止中に過ぎた予約は `missed` にして発信しない |
 | 会話ターン数の上限 | `MAX_TURNS`（既定 8）で打ち切り |
-| 認証 | 管理 API は固定 APIキー、Twilio Webhook は署名 + 通話別トークン |
+| 認証 | 管理 API は固定 APIキー、Telnyx Webhook は通話別トークン |
 
-おおよその費用感（2026 年時点の目安。最新は各社の料金ページを確認してください）:
+費用の内訳（最新は Telnyx / Anthropic の料金ページを確認してください）:
 
-- Twilio 電話番号: 月 $1〜
-- 日本の携帯への発信: 1 分あたり $0.1 前後
-- ConversationRelay: 1 分あたり別途課金
+- Telnyx の US Local 番号: 月額無料のものが多い
+- 日本の携帯への発信: 分単位で課金（ここが主なコスト）
+- Conversation Relay の STT / TTS: 別途課金
 - Claude Haiku 4.5: 1 通話の判定で $0.001 未満
 
-**Twilio コンソールで使用量アラートを設定しておくことを強くおすすめします。**
+**Telnyx コンソールで使用量アラートを設定しておくことを強くおすすめします。**
 
 会話ログはローカルの SQLite（`morning_call.db`）にのみ保存され、外部には送信しません。
 （起床判定のためにユーザーの発話テキストは Anthropic API へ送られます）
@@ -439,13 +471,18 @@ uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 | 症状 | 原因と対処 |
 |---|---|
 | 電話がかかってこない | `GET /health` の `missing_env` が空か、`scheduled_jobs` が 1 以上かを確認 |
-| `Error 21215` (Geo Permission) | Twilio の **Voice → Settings → Geo Permissions** で Japan を許可 |
-| `Error 21219` / 発信が拒否される | トライアル中は **Verified Caller IDs** に発信先番号の登録が必要 |
-| `Error 21212` | `TWILIO_PHONE_NUMBER` が E.164 形式（`+1...`）か、購入済みの番号か確認 |
+| 発信が国際発信で拒否される | **Voice → Outbound Voice Profiles** で Japan が許可されているか確認 |
+| `HTTP 401` / `403` が返る | `TELNYX_API_KEY` が正しいか、期限切れでないか確認 |
+| `HTTP 404` が返る | `TELNYX_ACCOUNT_SID` を設定しているなら値が誤っている可能性。**空にすれば別方式で発信します** |
+| 残高不足で発信できない | Billing で入金（残高 $0 だと発信できません） |
+| `HTTP 422` が返る | `TELNYX_APPLICATION_SID` が TeXML Application の ID か、`TELNYX_PHONE_NUMBER` が購入済みの E.164 番号か確認 |
 | 電話は鳴るが無音／すぐ切れる | `APP_BASE_URL` が現在の ngrok URL と一致しているか確認。ngrok は再起動で URL が変わります |
-| `Twilio 署名の検証に失敗しました` | 同上（URL 不一致）。切り分け中は `TWILIO_VALIDATE_SIGNATURE=false` で回避可 |
-| AI が話さない／会話にならない | ngrok の Web インスペクタ（http://127.0.0.1:4040）で `/twilio/voice/...` のレスポンスを確認。`wss://` の URL が正しいか見る |
-| 日本語が変な発音になる | `.env` で `TWILIO_TTS_PROVIDER=Google` と `TWILIO_VOICE=ja-JP-Neural2-B` を試す |
+| AI が話さない／会話にならない | ngrok の Web インスペクタ（http://127.0.0.1:4040）で `/telnyx/voice/...` のレスポンスを確認。`wss://` の URL が正しいか見る |
+| 日本語が聞き取られない | `TELNYX_SPEECH_MODEL` が `flux` になっていないか確認（英語専用）。`nova-3` を使う |
+| 冒頭に英語のアナウンスが入る | **トライアルアカウントの仕様**です（"This is an automated call generated on the Telnyx platform..."）。消すにはアカウント Level 2 が必要 |
+| 発信が `D60` / code 10010 で 403 | 発信先が **Verified Numbers** に未登録。Telnyx コンソールで自分の番号を認証してください |
+| **メッセージ全体が英語の音声で読まれる** | `TELNYX_VOICE` が空。`<Say>` は `voice` 未指定だと英語になります（`language` は `voice="alice"` のときしか効きません）。`AWS.Polly.Tomoko-Neural` などを設定 |
+| 日本語の発音を変えたい | `TELNYX_VOICE` を別の ja-JP 音声に変更（`AWS.Polly.Takumi-Neural`／`Azure.ja-JP-NanamiNeural` など） |
 | 起床判定がおかしい | `ANTHROPIC_MODEL=claude-sonnet-5` に変更して再起動 |
 | 予約が消えた | `morning_call.db` が消えていないか確認。デプロイ先では永続ディスクが必要です |
 | サーバ再起動後に予約が動かない | 予定時刻を過ぎたものは `missed` になります（仕様）。未来の予約は自動で復元されます |
@@ -455,8 +492,8 @@ uvicorn backend.main:app --host 0.0.0.0 --port $PORT
 サーバのログに、発信・判定・再架電がすべて出力されます。
 
 ```
-INFO  backend.scheduler: 発信ジョブを登録しました call_id=1 run_date=2026-08-12T22:00:00+00:00
-INFO  backend.twilio_client: 発信しました call_id=1 sid=CAxxxxxxxx
+INFO  backend.scheduler: 発信ジョブを登録しました call_id=1 run_date=2026-08-20T22:00:00+00:00
+INFO  backend.telnyx_client: 発信しました call_id=1 sid=xxxxxxxx
 INFO  backend.conversation: ConversationRelay 接続 call_id=1
 INFO  backend.conversation: 判定 call_id=1 decision=snooze end_call=True
 INFO  backend.conversation: 再架電を予約しました call_id=1 -> 2
@@ -467,6 +504,6 @@ INFO  backend.conversation: 再架電を予約しました call_id=1 -> 2
 ## 今後の拡張案（今回のスコープ外）
 
 - モバイルアプリ化（Flutter 等、macOS 非依存の技術）
-- マルチユーザー対応（このタイミングで Firestore 移行を検討）
+- マルチユーザー対応
 - 定期予約（毎朝 7 時など）
 - 天気やニュースを読み上げる

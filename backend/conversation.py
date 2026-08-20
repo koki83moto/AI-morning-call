@@ -1,6 +1,7 @@
-"""ConversationRelay（Twilio）用の WebSocket ハンドラ。
+"""ConversationRelay（Telnyx）用の WebSocket ハンドラ。
 
-Twilio 側が音声認識と読み上げをやってくれるので、ここではテキストのやり取りだけを扱う。
+Telnyx 側が音声認識と読み上げをやってくれるので、ここではテキストのやり取りだけを扱う。
+メッセージ形式は Twilio の ConversationRelay とほぼ同じ。
 
 受信するメッセージ:
     {"type": "setup",   "callSid": "...", "from": "...", "to": "..."}
@@ -47,8 +48,8 @@ def _mark_in_progress(call_id: int, call_sid: str | None) -> None:
         if call is None:
             return
         call.status = CallStatus.IN_PROGRESS.value
-        if call_sid and not call.twilio_call_sid:
-            call.twilio_call_sid = call_sid
+        if call_sid and not call.provider_call_sid:
+            call.provider_call_sid = call_sid
 
 
 def _add_log(call_id: int, role: str, content: str, decision: str | None = None) -> None:
@@ -90,9 +91,9 @@ class RelaySession:
         self.turns = 0
         self.outcome: str | None = None  # awake / snooze / no_answer
 
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str, decision: str | None = None) -> None:
         await self.ws.send_json({"type": "text", "token": text, "last": True})
-        await _db(_add_log, self.call_id, "assistant", text)
+        await _db(_add_log, self.call_id, "assistant", text, decision)
 
     async def send_end(self, reason: str) -> None:
         payload = json.dumps({"callId": self.call_id, "reason": reason}, ensure_ascii=False)
@@ -101,8 +102,8 @@ class RelaySession:
         except Exception:
             logger.debug("end メッセージの送信に失敗（既に切断済みの可能性）")
 
-    async def say_and_end(self, text: str, reason: str) -> None:
-        await self.send_text(text)
+    async def say_and_end(self, text: str, reason: str, decision: str | None = None) -> None:
+        await self.send_text(text, decision)
         # 読み上げが終わる前に切らないよう少し待つ
         await asyncio.sleep(_estimate_speech_seconds(text))
         await self.send_end(reason)
@@ -116,7 +117,7 @@ class RelaySession:
 
         judgement: Judgement = await judge_wakeup(self.history, self.wake_message)
         self.history.append({"role": "assistant", "content": judgement.reply})
-        await _db(_add_log, self.call_id, "assistant", judgement.reply, judgement.decision)
+        # ここではログを書かない。実際に送信する send_text 側で decision 付きで記録する。
 
         logger.info(
             "判定 call_id=%s decision=%s end_call=%s",
@@ -127,12 +128,12 @@ class RelaySession:
 
         if judgement.decision == "awake":
             self.outcome = "awake"
-            await self.say_and_end(judgement.reply, "awake")
+            await self.say_and_end(judgement.reply, "awake", judgement.decision)
             return True
 
         if judgement.decision == "snooze":
             self.outcome = "snooze"
-            await self.say_and_end(judgement.reply, "snooze")
+            await self.say_and_end(judgement.reply, "snooze", judgement.decision)
             return True
 
         # unclear: 聞き直す。ただし往復が続きすぎたら打ち切る。
@@ -144,7 +145,7 @@ class RelaySession:
             )
             return True
 
-        await self.send_text(judgement.reply)
+        await self.send_text(judgement.reply, judgement.decision)
         return False
 
     async def handle_silence(self) -> bool:

@@ -31,7 +31,7 @@ def new_token() -> str:
 
 class CallStatus(str, enum.Enum):
     SCHEDULED = "scheduled"      # 予約済み・発信待ち
-    DIALING = "dialing"          # Twilio に発信を依頼した
+    DIALING = "dialing"          # Telnyx に発信を依頼した
     IN_PROGRESS = "in_progress"  # 通話中（ConversationRelay 接続済み）
     COMPLETED = "completed"      # 起床確認できて正常終了
     NO_ANSWER = "no_answer"      # 応答なし／無音
@@ -49,10 +49,10 @@ class Call(Base):
     message: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default=CallStatus.SCHEDULED.value, index=True)
 
-    # Twilio の Webhook / WebSocket を認証するためのワンタイム的なトークン
+    # Telnyx の Webhook / WebSocket を認証するためのワンタイム的なトークン
     token: Mapped[str] = mapped_column(String(64), default=new_token, index=True)
 
-    twilio_call_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provider_call_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 再架電の連鎖を追うための情報
@@ -78,7 +78,7 @@ class Call(Base):
             "call_at": self.call_at.replace(tzinfo=timezone.utc).isoformat(),
             "message": self.message,
             "status": self.status,
-            "twilio_call_sid": self.twilio_call_sid,
+            "provider_call_sid": self.provider_call_sid,
             "error": self.error,
             "retry_count": self.retry_count,
             "parent_call_id": self.parent_call_id,

@@ -16,8 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import config, scheduler, twilio_client
-from .auth import require_api_key, verify_call_token, verify_twilio_signature
+from . import config, scheduler, telnyx_client
+from .auth import require_api_key, verify_call_token, verify_telnyx_signature
 from .conversation import handle_conversation_relay
 from .db import get_session, init_db
 from .llm_client import parse_schedule_request
@@ -226,11 +226,17 @@ def _get_setting(session: Session, key: str) -> str | None:
     return setting.value if setting else None
 
 
-# --- Twilio Webhook -------------------------------------------------------
+# --- Telnyx Webhook -------------------------------------------------------
 
 
-@app.post("/twilio/voice/{call_id}", tags=["twilio"], include_in_schema=False)
-async def twilio_voice(
+# TeXML Application 側の Voice Method が GET / POST どちらでも動くようにしておく
+@app.api_route(
+    "/telnyx/voice/{call_id}",
+    methods=["GET", "POST"],
+    tags=["telnyx"],
+    include_in_schema=False,
+)
+async def telnyx_voice(
     call_id: int,
     request: Request,
     token: str | None = None,
@@ -241,24 +247,24 @@ async def twilio_voice(
         raise HTTPException(status_code=404, detail="指定された通話が見つかりません。")
 
     verify_call_token(call.token, token)
-    await verify_twilio_signature(request)
+    await verify_telnyx_signature(request)
 
     if call.use_conversation:
-        twiml = twilio_client.build_conversation_relay_twiml(
+        texml = telnyx_client.build_conversation_relay_texml(
             call_id=call.id,
             token=call.token,
             greeting=f"{call.message} 起きていますか？",
         )
     else:
-        twiml = twilio_client.build_say_twiml(call.message)
+        texml = telnyx_client.build_say_texml(call.message)
         call.status = CallStatus.COMPLETED.value
         session.commit()
 
-    return Response(content=twiml, media_type="application/xml")
+    return Response(content=texml, media_type="application/xml")
 
 
-@app.post("/twilio/status/{call_id}", tags=["twilio"], include_in_schema=False)
-async def twilio_status(
+@app.post("/telnyx/status/{call_id}", tags=["telnyx"], include_in_schema=False)
+async def telnyx_status(
     call_id: int,
     request: Request,
     token: str | None = None,
@@ -269,17 +275,17 @@ async def twilio_status(
         return Response(status_code=204)
 
     verify_call_token(call.token, token)
-    await verify_twilio_signature(request)
+    await verify_telnyx_signature(request)
 
     form = await request.form()
     call_status = str(form.get("CallStatus", ""))
-    logger.info("Twilio ステータス call_id=%s status=%s", call_id, call_status)
+    logger.info("Telnyx ステータス call_id=%s status=%s", call_id, call_status)
 
     session.add(
         ConversationLog(
             call_id=call_id,
             role="system",
-            content=f"Twilio CallStatus: {call_status}",
+            content=f"Telnyx CallStatus: {call_status}",
         )
     )
 
