@@ -2,33 +2,33 @@
 
 const $ = (id) => document.getElementById(id);
 
-const apiKeyInput = $("api-key");
 const phoneInput = $("phone-number");
 const settingsStatus = $("settings-status");
+const loginStatus = $("login-status");
 const chatLog = $("chat-log");
 const chatForm = $("chat-form");
 const chatInput = $("chat-input");
 const callsList = $("calls-list");
 
-const STORAGE_KEY = "morning-call:apiKey";
-
-function getApiKey() {
-  return apiKeyInput.value.trim();
-}
+const loginPanel = $("login-panel");
+const settingsPanel = $("settings-panel");
+const chatPanel = $("chat-panel");
+const callsPanel = $("calls-panel");
 
 async function api(path, options = {}) {
-  const key = getApiKey();
-  if (!key) {
-    throw new Error("API キーを入力してください。");
-  }
+  // 認証はログインで発行される HttpOnly Cookie が担う（同一オリジンなので自動送信）。
   const response = await fetch(path, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "X-API-Key": key,
       ...(options.headers || {}),
     },
   });
+
+  if (response.status === 401) {
+    showLoggedOut();
+    throw new Error("ログインしてください。");
+  }
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
@@ -51,6 +51,20 @@ async function api(path, options = {}) {
 function setStatus(text, kind = "") {
   settingsStatus.textContent = text;
   settingsStatus.className = `status ${kind}`;
+}
+
+function showLoggedIn() {
+  loginPanel.hidden = true;
+  settingsPanel.hidden = false;
+  chatPanel.hidden = false;
+  callsPanel.hidden = false;
+}
+
+function showLoggedOut() {
+  loginPanel.hidden = false;
+  settingsPanel.hidden = true;
+  chatPanel.hidden = true;
+  callsPanel.hidden = true;
 }
 
 function addBubble(text, kind) {
@@ -160,18 +174,45 @@ async function loadPhone() {
   }
 }
 
-$("save-settings").addEventListener("click", async () => {
-  const key = getApiKey();
-  if (!key) {
-    setStatus("API キーを入力してください。", "err");
-    return;
-  }
-  localStorage.setItem(STORAGE_KEY, key);
+$("login-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const password = $("password").value;
+  if (!password) return;
 
+  loginStatus.textContent = "確認中…";
+  loginStatus.className = "status";
+  try {
+    const response = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${response.status}`);
+    }
+    $("password").value = "";
+    loginStatus.textContent = "";
+    showLoggedIn();
+    await loadPhone();
+    await loadCalls();
+  } catch (err) {
+    loginStatus.textContent = err.message;
+    loginStatus.className = "status err";
+  }
+});
+
+$("logout").addEventListener("click", async () => {
+  await fetch("/auth/logout", { method: "POST" });
+  phoneInput.value = "";
+  chatLog.innerHTML = "";
+  showLoggedOut();
+});
+
+$("save-settings").addEventListener("click", async () => {
   const phone = phoneInput.value.trim();
   if (!phone) {
-    setStatus("API キーを保存しました。", "ok");
-    await loadCalls();
+    setStatus("電話番号を入力してください。", "err");
     return;
   }
 
@@ -211,12 +252,21 @@ chatForm.addEventListener("submit", async (event) => {
   }
 });
 
-// 初期化
-const savedKey = localStorage.getItem(STORAGE_KEY);
-if (savedKey) {
-  apiKeyInput.value = savedKey;
-  loadPhone();
-  loadCalls();
-} else {
-  renderCalls([]);
-}
+// 初期化: Cookie が有効なら入力なしでそのまま使える
+(async () => {
+  // 旧バージョンが localStorage に置いていた API キーは不要になったので消す
+  localStorage.removeItem("morning-call:apiKey");
+
+  try {
+    const { authenticated } = await (await fetch("/auth/status")).json();
+    if (authenticated) {
+      showLoggedIn();
+      await loadPhone();
+      await loadCalls();
+      return;
+    }
+  } catch (_) {
+    /* サーバに繋がらない場合はログイン画面を出す */
+  }
+  showLoggedOut();
+})();

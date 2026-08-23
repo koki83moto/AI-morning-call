@@ -49,6 +49,12 @@ class ChatScheduleRequest(BaseModel):
         return v
 
 
+class LoginRequest(BaseModel):
+    """UI からのログイン。パスワードは .env の API_KEY と同じ値。"""
+
+    password: str
+
+
 class PhoneSettingRequest(BaseModel):
     phone_number: str
 

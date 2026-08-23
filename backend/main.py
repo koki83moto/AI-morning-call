@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -17,12 +19,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import config, scheduler, telnyx_client
-from .auth import require_api_key, verify_call_token, verify_telnyx_signature
+from .auth import (
+    SESSION_COOKIE,
+    cookie_secure,
+    is_authenticated,
+    issue_session_token,
+    require_api_key,
+    verify_call_token,
+    verify_telnyx_signature,
+)
 from .conversation import handle_conversation_relay
 from .db import get_session, init_db
 from .llm_client import parse_schedule_request
 from .models import Call, CallStatus, ConversationLog, Setting, utcnow
-from .schemas import ChatScheduleRequest, PhoneSettingRequest, ScheduleCallRequest
+from .schemas import (
+    ChatScheduleRequest,
+    LoginRequest,
+    PhoneSettingRequest,
+    ScheduleCallRequest,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +96,52 @@ async def health():
         "model": config.ANTHROPIC_MODEL,
         "scheduled_jobs": len(scheduler.scheduler.get_jobs()),
         "missing_env": config.missing_required(),
+    }
+
+
+# --- ログイン --------------------------------------------------------------
+
+
+@app.post("/auth/login", tags=["auth"])
+async def login(payload: LoginRequest, request: Request, response: Response):
+    """UI からのログイン。成功するとセッション Cookie を発行する。
+
+    パスワードは .env の API_KEY。以降 UI ではキーの入力が不要になる。
+    """
+    if not config.API_KEY:
+        raise HTTPException(
+            status_code=500, detail="API_KEY が未設定です。.env を確認してください。"
+        )
+    if not hmac.compare_digest(payload.password, config.API_KEY):
+        # 総当たりを少しでも遅くする
+        await asyncio.sleep(1)
+        raise HTTPException(status_code=401, detail="パスワードが違います。")
+
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=issue_session_token(),
+        max_age=config.SESSION_TTL_SECONDS,
+        httponly=True,  # JS から読めないので localStorage より安全
+        samesite="lax",  # 他サイトからの POST に Cookie を送らない（CSRF 対策）
+        secure=cookie_secure(request),
+        path="/",
+    )
+    logger.info("ログインしました")
+    return {"authenticated": True}
+
+
+@app.post("/auth/logout", tags=["auth"])
+async def logout(response: Response):
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"authenticated": False}
+
+
+@app.get("/auth/status", tags=["auth"])
+async def auth_status(request: Request):
+    return {
+        "authenticated": is_authenticated(
+            request.headers.get("x-api-key"), request.cookies.get(SESSION_COOKIE)
+        )
     }
 
 

@@ -158,7 +158,13 @@ Telnyx へ移行した。Telnyx の Conversation Relay は Twilio の Conversati
 - 複数ワーカー対応不要（シングルプロセス運用）
 
 ### 4. 個人利用 PoC のため過剰な認証機構は追加しない
-- 管理 API: 固定 APIキー (`X-API-Key` ヘッダ)
+- 管理 API: 固定 APIキー (`X-API-Key` ヘッダ) **または** ログインで発行される
+  セッション Cookie。共有シークレットは `API_KEY` 1 つだけ
+- セッション Cookie は `API_KEY` を鍵にした HMAC 署名文字列（サーバ側は状態を持たない）。
+  `API_KEY` を変更すれば発行済み Cookie は全て無効になる
+- `HttpOnly` + `SameSite=Lax`。`Secure` は**リクエストのスキーム**で判定する
+  （`APP_BASE_URL` で判定すると ngrok の https を設定したまま localhost 開発したときに
+  Cookie が返らなくなる）
 - Telnyx Webhook: 通話ごとのトークン検証（これ以上の強化は不要）
 - Ed25519 署名検証は任意。TeXML Webhook に署名が付くか未確認のため既定は無効
   (`TELNYX_VALIDATE_SIGNATURE=false`)

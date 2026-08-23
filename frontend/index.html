@@ -13,11 +13,29 @@
     </header>
 
     <main>
-      <section class="panel" id="settings-panel">
-        <h2>設定</h2>
-        <div class="field">
-          <label for="api-key">API キー</label>
-          <input id="api-key" type="password" placeholder=".env の API_KEY" autocomplete="off" />
+      <section class="panel" id="login-panel" hidden>
+        <h2>ログイン</h2>
+        <form id="login-form">
+          <div class="field">
+            <label for="password">パスワード</label>
+            <input
+              id="password"
+              type="password"
+              placeholder=".env の API_KEY"
+              autocomplete="current-password"
+            />
+          </div>
+          <div class="actions">
+            <button type="submit">ログイン</button>
+            <span id="login-status" class="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" id="settings-panel" hidden>
+        <div class="panel-head">
+          <h2>設定</h2>
+          <button id="logout" type="button" class="ghost">ログアウト</button>
         </div>
         <div class="field">
           <label for="phone-number">電話番号（E.164）</label>
@@ -29,7 +47,7 @@
         </div>
       </section>
 
-      <section class="panel" id="chat-panel">
+      <section class="panel" id="chat-panel" hidden>
         <h2>チャットで予約</h2>
         <div id="chat-log" class="chat-log" aria-live="polite"></div>
         <form id="chat-form" class="chat-form">
@@ -43,7 +61,7 @@
         </form>
       </section>
 
-      <section class="panel" id="calls-panel">
+      <section class="panel" id="calls-panel" hidden>
         <div class="panel-head">
           <h2>予約一覧</h2>
           <button id="refresh-calls" type="button" class="ghost">再読み込み</button>

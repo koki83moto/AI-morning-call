@@ -87,8 +87,11 @@ ANTHROPIC_MODEL = _get("ANTHROPIC_MODEL", "claude-haiku-4-5")
 # Telnyx の Webhook が到達できる公開 URL（ngrok または本番 URL）
 APP_BASE_URL = _get("APP_BASE_URL").rstrip("/")
 
-# 管理 API を守る固定 APIキー
+# 管理 API を守る固定 APIキー。UI のログインパスワードも兼ねる。
 API_KEY = _get("API_KEY")
+
+# ログイン後にセッション Cookie が有効な秒数（既定 30 日）
+SESSION_TTL_SECONDS = _get_int("SESSION_TTL_SECONDS", 60 * 60 * 24 * 30)
 
 TIMEZONE = _get("TIMEZONE", "Asia/Tokyo")
 TZ = ZoneInfo(TIMEZONE)

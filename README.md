@@ -331,7 +331,8 @@ curl -H "X-API-Key: $API_KEY" http://localhost:8000/calls/1
 
 ブラウザで http://localhost:8000/ を開きます。
 
-1. **API キー**に `.env` の `API_KEY` を入力
+1. **パスワード**に `.env` の `API_KEY` を入力してログイン
+   （セッション Cookie が発行されるので、以降は入力不要です。既定 30 日間有効）
 2. **電話番号**に自分の携帯番号（`+819012345678`）を入力して「保存」
 3. チャット欄に自然文で入力
 
@@ -354,11 +355,15 @@ curl -X POST http://localhost:8000/chat/schedule \
 
 ## API リファレンス
 
-管理系のエンドポイントはすべて `X-API-Key` ヘッダが必要です。
+管理系のエンドポイントは **`X-API-Key` ヘッダ**（curl / Swagger UI 用）
+**または セッション Cookie**（UI 用）のどちらかで認証します。
 
 | Method | Path | 説明 |
 |---|---|---|
 | `GET` | `/health` | 死活確認・設定漏れの確認 |
+| `POST` | `/auth/login` | パスワード（`API_KEY`）でログインし Cookie を発行 |
+| `POST` | `/auth/logout` | Cookie を破棄 |
+| `GET` | `/auth/status` | ログイン済みかどうか |
 | `POST` | `/calls/schedule` | 発信を予約 |
 | `GET` | `/calls` | 予約・実行済み一覧（`?limit=` `?status=`） |
 | `GET` | `/calls/{id}` | 詳細 + 会話ログ |
@@ -371,6 +376,17 @@ curl -X POST http://localhost:8000/chat/schedule \
 
 Telnyx 向けエンドポイントは APIキーではなく、**通話ごとのトークン**で保護しています
 （任意で Ed25519 署名検証も有効化できます）。
+
+### 認証のしくみ
+
+共有シークレットは `.env` の `API_KEY` ひとつだけです。UI からログインすると、
+`API_KEY` を鍵にした HMAC 署名付きの文字列が `HttpOnly` Cookie として発行されます。
+
+- サーバ側にセッションを保存しないので、再起動してもログインは維持されます
+- `HttpOnly` なので JavaScript から盗めません（localStorage に置くより安全）
+- `SameSite=Lax` なので他サイトからの POST に Cookie が送られません（CSRF 対策）
+- **`API_KEY` を変更すると、発行済みの Cookie はすべて無効**になります
+- 有効期間は `SESSION_TTL_SECONDS`（既定 30 日）で変更できます
 
 ### `status` の意味
 
@@ -426,7 +442,7 @@ ANTHROPIC_MODEL=claude-sonnet-5
 | 発信失敗時の非リトライ | Telnyx エラー時はログと DB に記録して終了。次回起動時も再試行しない |
 | 起動時の期限切れ処理 | サーバ停止中に過ぎた予約は `missed` にして発信しない |
 | 会話ターン数の上限 | `MAX_TURNS`（既定 8）で打ち切り |
-| 認証 | 管理 API は固定 APIキー、Telnyx Webhook は通話別トークン |
+| 認証 | 管理 API は APIキー／セッション Cookie、Telnyx Webhook は通話別トークン |
 
 費用の内訳（最新は Telnyx / Anthropic の料金ページを確認してください）:
 
